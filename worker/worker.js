@@ -13,6 +13,10 @@
 //   PROVIDER            "gemini" (default, free tier) or "anthropic" (paid, strongest rulings)
 //   ANTHROPIC_MODEL     default "claude-sonnet-5-5"
 //   GEMINI_MODEL        default "gemini-3.8-flash"
+//   GEMINI_FALLBACK_MODEL  tried once when GEMINI_MODEL is overloaded or out of quota;
+//                       default "gemini-3.7-flash", "none" turns it off
+//   GEMINI_THINKING     how hard Gemini thinks: "low" (default, fastest), "medium", "high",
+//                       or "default" to use the model's own default
 //   ALLOWED_ORIGINS     comma-separated list of sites allowed to call this Worker
 //   RATE_LIMIT_PER_MINUTE  model calls per visitor per minute (default 30)
 //   ANTHROPIC_EFFORT    how hard Claude thinks: "low", "medium" (default), "high"
@@ -22,6 +26,12 @@ const DEFAULTS = {
   PROVIDER: 'gemini',
   ANTHROPIC_MODEL: 'claude-sonnet-5-5',
   GEMINI_MODEL: 'gemini-3.8-flash',
+  // Google's free tier sometimes answers "high demand" (503) for its newest model. The
+  // previous Flash model is usually free of that spike and has its own quota.
+  GEMINI_FALLBACK_MODEL: 'gemini-3.7-flash',
+  // "low" keeps rulings quick at the table; the model's default (medium) can take 20 to 30
+  // seconds per lookup round.
+  GEMINI_THINKING: 'low',
   ALLOWED_ORIGINS: 'https://the-ljaw.github.io',
   RATE_LIMIT_PER_MINUTE: '30',
   ANTHROPIC_EFFORT: 'medium',
@@ -388,23 +398,45 @@ function toGeminiContents(msgs) {
   return out;
 }
 
+function geminiModels(env) {
+  const main = env.GEMINI_MODEL || DEFAULTS.GEMINI_MODEL;
+  const fb = String(env.GEMINI_FALLBACK_MODEL ?? DEFAULTS.GEMINI_FALLBACK_MODEL).trim();
+  const off = !fb || ['none', 'off', 'false'].includes(fb.toLowerCase());
+  return off || fb === main ? [main] : [main, fb];
+}
+
+function geminiThinking(env) {
+  const level = String(env.GEMINI_THINKING || DEFAULTS.GEMINI_THINKING).trim().toLowerCase();
+  return ['low', 'medium', 'high'].includes(level) ? { thinkingLevel: level } : null;
+}
+
 async function callGemini(env, msgs, opts, emit) {
   if (!env.GEMINI_API_KEY) throw new ConfigError('GEMINI_API_KEY is not set on the Worker.');
   const base = (env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com').replace(/\/$/, '');
-  const model = env.GEMINI_MODEL || DEFAULTS.GEMINI_MODEL;
+  const thinkingConfig = geminiThinking(env);
   const body = {
     systemInstruction: { parts: [{ text: systemPrompt(opts.crEffective) }] },
     contents: toGeminiContents(msgs),
     tools: [{ functionDeclarations: TOOLS.map((t) => ({ name: t.name, description: t.description, parameters: toGeminiSchema(t.input_schema) })) }],
     toolConfig: { functionCallingConfig: { mode: opts.allowTools ? 'AUTO' : 'NONE' } },
-    generationConfig: { maxOutputTokens: 8192 },
+    generationConfig: { maxOutputTokens: 8192, ...(thinkingConfig ? { thinkingConfig } : {}) },
   };
-  const res = await fetch(`${base}/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw await upstreamError(res, 'gemini');
+  // Nothing has been streamed to the app yet, so an overloaded model can be swapped for the
+  // fallback without the player noticing. Google's docs say thought signatures from another
+  // Gemini model in the history are fine to resend.
+  const models = geminiModels(env);
+  let res;
+  for (let i = 0; i < models.length; i++) {
+    res = await fetch(`${base}/v1beta/models/${encodeURIComponent(models[i])}:streamGenerateContent?alt=sse`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) break;
+    const err = await upstreamError(res, 'gemini');
+    if (err.code !== 'busy' || i === models.length - 1) throw err;
+    console.log(`gemini: ${models[i]} is busy, trying ${models[i + 1]}`);
+  }
 
   const parts = [];
   let calls = 0;
@@ -454,7 +486,10 @@ async function upstreamError(res, provider) {
   } catch { /* not JSON */ }
   console.log(`${provider} error ${res.status}: ${message}`);
   if (res.status === 429 || res.status === 529 || res.status === 503) return new UpstreamError('busy', message);
-  if (res.status === 401 || res.status === 403) return new UpstreamError('config', 'The Worker\'s API key was rejected by the provider.');
+  // Google answers a bad key with 400 "API key not valid" rather than 401.
+  if (res.status === 401 || res.status === 403 || (res.status === 400 && /api key/i.test(message))) {
+    return new UpstreamError('config', 'The Worker\'s API key was rejected by the provider.');
+  }
   if (res.status === 404) return new UpstreamError('config', `The model name was not found: ${message}`);
   return new UpstreamError('upstream', message);
 }
@@ -566,6 +601,7 @@ export default {
         service: 'head-judge-arbiter',
         provider,
         model: provider === 'gemini' ? env.GEMINI_MODEL || DEFAULTS.GEMINI_MODEL : env.ANTHROPIC_MODEL || DEFAULTS.ANTHROPIC_MODEL,
+        ...(provider === 'gemini' ? { fallback: geminiModels(env)[1] || null } : {}),
         passcode: !!env.ACCESS_CODE,
         message: keySet ? 'On duty.' : `Set the ${provider === 'gemini' ? 'GEMINI_API_KEY' : 'ANTHROPIC_API_KEY'} secret on this Worker.`,
       }, 200, cors || {});
@@ -579,4 +615,4 @@ export default {
 };
 
 // Exposed for tests.
-export const _internal = { toAnthropicMessages, toGeminiContents, toGeminiSchema, validate, systemPrompt, TOOLS };
+export const _internal = { toAnthropicMessages, toGeminiContents, toGeminiSchema, validate, systemPrompt, geminiModels, geminiThinking, TOOLS };

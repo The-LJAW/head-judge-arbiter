@@ -8,6 +8,10 @@ compatibility_date = "2026-09-01"
 # "gemini" uses Google's free tier. "anthropic" uses Claude (paid, strongest rulings).
 PROVIDER = "gemini"
 GEMINI_MODEL = "gemini-3.8-flash"
+# Tried once when GEMINI_MODEL is overloaded or out of quota. "none" turns it off.
+GEMINI_FALLBACK_MODEL = "gemini-3.7-flash"
+# "low" (fastest), "medium", "high", or "default" for the model's own setting.
+GEMINI_THINKING = "low"
 ANTHROPIC_MODEL = "claude-sonnet-5-5"
 ANTHROPIC_EFFORT = "medium"
 # Sites allowed to call this Worker. Add your custom domain here later if you get one.
