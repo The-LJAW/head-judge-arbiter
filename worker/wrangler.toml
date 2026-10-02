@@ -1,0 +1,29 @@
+# Cloudflare Worker that protects the AI key. Deploy with: cd worker && npx wrangler deploy
+# Or skip the CLI entirely: paste worker.js into a new Worker in the Cloudflare dashboard (see README).
+name = "head-judge-arbiter"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+
+[vars]
+# "gemini" uses Google's free tier. "anthropic" uses Claude (paid, strongest rulings).
+PROVIDER = "gemini"
+GEMINI_MODEL = "gemini-3.8-flash"
+ANTHROPIC_MODEL = "claude-sonnet-5-5"
+ANTHROPIC_EFFORT = "medium"
+# Sites allowed to call this Worker. Add your custom domain here later if you get one.
+ALLOWED_ORIGINS = "https://the-ljaw.github.io"
+RATE_LIMIT_PER_MINUTE = "30"
+
+# Secrets are never stored in this file. Set them with:
+#   npx wrangler secret put GEMINI_API_KEY
+#   npx wrangler secret put ANTHROPIC_API_KEY   (only if PROVIDER = "anthropic")
+#   npx wrangler secret put ACCESS_CODE         (optional group passcode)
+
+# Optional: network-wide rate limiting (stronger than the built-in per-instance limiter).
+# Uncomment if your account offers the Rate Limiting binding.
+# [[ratelimits]]
+# name = "RATE_LIMITER"
+# namespace_id = "1001"
+#   [ratelimits.simple]
+#   limit = 30
+#   period = 60

@@ -1,0 +1,14 @@
+{
+  "name": "head-judge-arbiter",
+  "version": "2.0.0",
+  "private": true,
+  "description": "A friendly Magic: The Gathering rules judge that checks current Oracle text and the Comprehensive Rules before ruling.",
+  "type": "module",
+  "scripts": {
+    "test": "node tests/rules-search.test.mjs && node tests/app-modules.test.mjs && node tests/worker.test.mjs",
+    "dev": "node tests/dev-server.mjs",
+    "rules": "node scripts/build-rules.mjs",
+    "deploy:worker": "cd worker && npx wrangler deploy"
+  },
+  "engines": { "node": ">=20" }
+}

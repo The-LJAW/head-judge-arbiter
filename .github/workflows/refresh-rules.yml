@@ -1,0 +1,34 @@
+name: Refresh Comprehensive Rules
+
+# Wizards updates the Comprehensive Rules a few times a year, usually with each set.
+# This checks every Monday and commits a fresh data/rules.json only when the rules changed.
+on:
+  schedule:
+    - cron: '17 13 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Download and rebuild the rules
+        run: node scripts/build-rules.mjs
+      - name: Commit if the rules changed
+        run: |
+          if git diff --quiet -- data/rules.json; then
+            echo "Rules unchanged."
+            exit 0
+          fi
+          EFFECTIVE=$(node -e "console.log(require('./data/rules.json').effective)")
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/rules.json
+          git commit -m "Update Comprehensive Rules (effective $EFFECTIVE)"
+          git push
