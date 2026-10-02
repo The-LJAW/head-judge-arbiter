@@ -384,7 +384,7 @@ function priorConversation(current) {
   return out;
 }
 
-async function streamTurn(messages, signal, onText, onCall) {
+async function streamTurn(messages, signal, onText, onCall, onReset) {
   let res;
   try {
     res = await fetch(`${PROXY}/chat`, {
@@ -430,6 +430,8 @@ async function streamTurn(messages, signal, onText, onCall) {
       else if (evt.type === 'tool_call') { const c = { id: evt.id, name: evt.name, input: evt.input || {} }; calls.push(c); onCall(c, text); }
       else if (evt.type === 'turn') raw = evt.raw;
       else if (evt.type === 'done') stop = evt.stop;
+      // The Worker switched to its backup model partway through; it starts this step over.
+      else if (evt.type === 'reset') { text = ''; calls.length = 0; raw = null; stop = null; if (onReset) onReset(); }
       else if (evt.type === 'error') throw new JudgeError(evt.code, evt.message);
     }
     if (chunk.done) break;
@@ -473,6 +475,7 @@ async function ask(question) {
   try {
     const loop = [...priorConversation(t), { role: 'user', content: q }];
     for (let round = 0; round < MAX_ROUNDS; round++) {
+      const mark = t.trace.length;
       const result = await streamTurn(
         loop,
         controller.signal,
@@ -487,6 +490,7 @@ async function ask(question) {
           t.trace.push({ id: call.id, kind, label: pendingLabel(call), state: 'pending' });
           scheduleRender(t);
         },
+        () => { t.trace.length = mark; t.answer = ''; scheduleRender(t); },
       );
       loop.push({ role: 'assistant', text: result.text, tool_calls: result.calls, raw: result.raw });
 
