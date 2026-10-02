@@ -2,7 +2,7 @@
 // After you deploy the Cloudflare Worker (see README), paste its URL into proxyUrl.
 window.HJA_CONFIG = {
   // Example: 'https://head-judge-arbiter.your-name.workers.dev'
-  proxyUrl: '',
+  proxyUrl: 'https://head-judge-arbiter.levi-joseph-andrew-wilson.workers.dev',
   scryfallBase: 'https://api.scryfall.com',
   symbolBase: 'https://svgs.scryfall.io/card-symbols',
   rulesUrl: 'data/rules.json',
