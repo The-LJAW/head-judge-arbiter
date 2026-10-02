@@ -72,10 +72,23 @@ Post the link in the Cube Commonwealth Discord. If you set an `ACCESS_CODE`, sha
 |---|---|---|
 | Cost | Free tier | About 3 to 8 cents per question |
 | Ruling quality | Good | Best on tricky multi-card interactions |
-| Limits | Google sets per-project limits (roughly 10 requests a minute on Flash; each question uses 2 to 4) | Effectively none for a friend group |
+| Limits | Google sets per-project limits (see **Rate limit** in AI Studio); each question uses 2 to 4 requests | Effectively none for a friend group |
 | Privacy | Google may use free-tier prompts to improve its products | Not used for training |
 
-The free tier is plenty for casual use. On a busy draft night with many people asking at once you may see "The judge is swamped," which means Google's per-minute limit was hit; waiting a minute fixes it. Turning on billing for the same Gemini key removes that limit and costs very little (Gemini 3.8 Flash is $0.75 per million input tokens through 2026).
+The free tier is plenty for casual use, and two settings keep it quick and dependable:
+
+- **Speed.** The Worker asks Gemini to think at its `low` level. In testing that cut a typical ruling from about a minute (with Google's default, `medium`) to under 30 seconds.
+- **Backup model.** Google's newest model sometimes answers "high demand" during busy spells, either right away or partway through an answer. When that happens the Worker redoes that step on Gemini 3.7 Flash, which has its own free quota, and the app quietly drops any half-finished text.
+
+If both models are busy you'll see "The judge is swamped"; waiting a minute usually fixes it. Turning on billing for the same Gemini key raises Google's limits and costs very little (Gemini 3.8 Flash is $0.75 per million input tokens through 2026).
+
+To tune either, add a Text variable on the Worker (**Settings > Variables and Secrets**):
+
+| Name | Default | Options |
+|---|---|---|
+| `GEMINI_THINKING` | `low` | `medium` or `high` for more careful but slower rulings, `default` for Google's setting |
+| `GEMINI_FALLBACK_MODEL` | `gemini-3.7-flash` | any Gemini model name, or `none` to turn the backup off |
+| `GEMINI_MODEL` | `gemini-3.8-flash` | the main model |
 
 **To switch to Claude:** create a key at [platform.claude.com](https://platform.claude.com), set a monthly spend limit there (Settings > Limits) as your cost guardrail, then in the Worker add a secret `ANTHROPIC_API_KEY` and a text variable `PROVIDER` = `anthropic`. Optional variables: `ANTHROPIC_MODEL` (default `claude-sonnet-5-5`) and `ANTHROPIC_EFFORT` (`low`, `medium` default, or `high`; higher is more careful but slower and costs more).
 
@@ -102,6 +115,8 @@ npm test        # rules search quality, rendering, and Worker tests against fake
 npm run dev     # full local preview at http://127.0.0.1:8080 with a fake judge (no keys needed)
 npm run rules   # rebuild data/rules.json from the newest official rules
 ```
+
+`npm run dev -- gemini` previews with a Gemini-style fake instead. Add `GEMINI_MODEL=gemini-flaky` (fails partway through an answer) or `GEMINI_MODEL=gemini-overloaded` (fails right away) in front of it to watch the backup model take over.
 
 Prefer the command line for the Worker? `cd worker`, then `npx wrangler secret put GEMINI_API_KEY` and `npx wrangler deploy`. Settings live in [`worker/wrangler.toml`](worker/wrangler.toml).
 
