@@ -121,6 +121,23 @@ await test('gemini: an overloaded model falls back to the backup model', async (
   assert.match(paths[3], /gemini-3\.7-flash/);
 });
 
+await test('gemini: a model that fails mid-answer resets and falls back', async () => {
+  mocks.requests.length = 0;
+  const env = { ...baseEnv, PROVIDER: 'gemini', GEMINI_MODEL: 'gemini-flaky' };
+  const evs = await events(await call(env, { messages: [{ role: 'user', content: 'Does deathtouch work with trample?' }] }));
+  const types = evs.map((e) => e.type);
+  assert.equal(types[0], 'text', 'the flaky model got partway');
+  assert.ok(types.includes('reset'), 'the app is told to drop the partial answer');
+  assert.ok(!types.includes('error'));
+  const afterReset = evs.slice(types.indexOf('reset') + 1);
+  assert.deepEqual(afterReset.filter((e) => e.type === 'tool_call').map((e) => e.name), ['lookup_card', 'search_rules']);
+  const turn = evs.find((e) => e.type === 'turn');
+  assert.ok(!JSON.stringify(turn.raw).includes('HALF-FINISHED'), 'history keeps only the fallback answer');
+  const paths = mocks.requests.filter((r) => r.path.includes(':streamGenerateContent')).map((r) => r.path);
+  assert.match(paths[0], /gemini-flaky/);
+  assert.match(paths[1], /gemini-3\.7-flash/);
+});
+
 await test('gemini: with the fallback off, an overloaded model reports busy', async () => {
   mocks.requests.length = 0;
   const env = { ...baseEnv, PROVIDER: 'gemini', GEMINI_MODEL: 'gemini-overloaded', GEMINI_FALLBACK_MODEL: 'none' };

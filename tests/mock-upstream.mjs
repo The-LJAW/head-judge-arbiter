@@ -151,6 +151,13 @@ export function startMocks(port = 0, { slow = 15 } = {}) {
       if (req.headers['x-goog-api-key'] !== 'test-gemini-key') { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: { code: 400, message: 'API key not valid' } })); }
       // Any model name containing "overloaded" answers the way Google does during a demand spike.
       if (url.pathname.includes('overloaded')) { res.writeHead(503, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: { code: 503, message: 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', status: 'UNAVAILABLE' } })); }
+      // "flaky" models start answering, then hit the same error partway through the stream.
+      if (url.pathname.includes('flaky')) {
+        return sse(res, [
+          `data: ${JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: 'HALF-FINISHED: Yes, they work together, and it' }] } }] })}\r\n\r\n`,
+          `data: ${JSON.stringify({ error: { code: 503, message: 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', status: 'UNAVAILABLE' } })}\r\n\r\n`,
+        ], slow);
+      }
       return sse(res, geminiReply(body), slow);
     }
 

@@ -23,6 +23,8 @@ const env = {
   GEMINI_BASE_URL: mocks.url,
   ALLOWED_ORIGINS: `http://127.0.0.1:${SITE_PORT},http://localhost:${SITE_PORT}`,
   ...(process.env.ACCESS_CODE ? { ACCESS_CODE: process.env.ACCESS_CODE } : {}),
+  // GEMINI_MODEL=gemini-flaky or gemini-overloaded previews the fallback to the backup model.
+  ...(process.env.GEMINI_MODEL ? { GEMINI_MODEL: process.env.GEMINI_MODEL } : {}),
 };
 
 // Runs the Worker module inside a plain Node HTTP server.
