@@ -101,6 +101,40 @@ await test('gemini: full tool loop keeps thought signatures and omits invented i
   assert.equal(fr.length, 2);
   assert.equal(fr[0].name, 'lookup_card');
   assert.equal(fr[0].id, undefined, 'invented ids are not sent back');
+  assert.deepEqual(reqs[0].body.generationConfig, { maxOutputTokens: 8192, thinkingConfig: { thinkingLevel: 'low' } });
+});
+
+await test('gemini: GEMINI_THINKING picks the level, "default" leaves it to the model', async () => {
+  assert.deepEqual(_internal.geminiThinking({ GEMINI_THINKING: 'High' }), { thinkingLevel: 'high' });
+  assert.equal(_internal.geminiThinking({ GEMINI_THINKING: 'default' }), null);
+  assert.equal(_internal.geminiThinking({ GEMINI_THINKING: 'minimal' }), null, 'unsupported levels are not sent');
+});
+
+await test('gemini: an overloaded model falls back to the backup model', async () => {
+  mocks.requests.length = 0;
+  const { final } = await runLoop({ ...baseEnv, PROVIDER: 'gemini', GEMINI_MODEL: 'gemini-overloaded' });
+  assert.match(final, /deathtouch/i);
+  const paths = mocks.requests.filter((r) => r.path.includes(':streamGenerateContent')).map((r) => r.path);
+  assert.equal(paths.length, 4, 'each round tries the main model once, then the fallback');
+  assert.match(paths[0], /gemini-overloaded/);
+  assert.match(paths[1], /gemini-3\.7-flash/);
+  assert.match(paths[3], /gemini-3\.7-flash/);
+});
+
+await test('gemini: with the fallback off, an overloaded model reports busy', async () => {
+  mocks.requests.length = 0;
+  const env = { ...baseEnv, PROVIDER: 'gemini', GEMINI_MODEL: 'gemini-overloaded', GEMINI_FALLBACK_MODEL: 'none' };
+  const evs = await events(await call(env, { messages: [{ role: 'user', content: 'hi' }] }));
+  assert.equal(evs.find((e) => e.type === 'error').code, 'busy');
+  assert.equal(mocks.requests.filter((r) => r.path.includes(':streamGenerateContent')).length, 1);
+});
+
+await test('gemini: a rejected key does not burn a fallback call', async () => {
+  mocks.requests.length = 0;
+  const env = { ...baseEnv, PROVIDER: 'gemini', GEMINI_API_KEY: 'wrong' };
+  const evs = await events(await call(env, { messages: [{ role: 'user', content: 'hi' }] }));
+  assert.equal(evs.find((e) => e.type === 'error').code, 'config', "Google's 400 for a bad key reads as a setup problem");
+  assert.equal(mocks.requests.filter((r) => r.path.includes(':streamGenerateContent')).length, 1);
 });
 
 await test('forces a final answer after too many tool rounds', async () => {
@@ -175,6 +209,7 @@ await test('defaults to the Gemini free tier when PROVIDER is unset', async () =
   const j = await res.json();
   assert.equal(j.provider, 'gemini');
   assert.equal(j.model, 'gemini-3.8-flash');
+  assert.equal(j.fallback, 'gemini-3.7-flash');
 });
 
 await test('system prompt has no em dashes', async () => {
