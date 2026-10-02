@@ -9,7 +9,6 @@ const PROXY = String(CFG.proxyUrl || '').trim().replace(/\/$/, '');
 const MAX_ROUNDS = 8;
 const STORE_KEY = 'hja.threads.v1';
 const CODE_KEY = 'hja.passcode';
-const CURRENT_KEY = 'hja.current';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
@@ -72,7 +71,6 @@ function saveThread(thread) {
   const all = loadThreads().filter((x) => x.id !== thread.id);
   all.unshift(slim);
   store.set(STORE_KEY, all.slice(0, 40));
-  store.set(CURRENT_KEY, { id: thread.id, at: Date.now() });
 }
 
 // ------------------------------------------------------------------ state
@@ -752,7 +750,6 @@ $('#btn-new').addEventListener('click', () => {
   if (state.busy) state.abort?.abort();
   saveThread(state.thread);
   state.thread = newThread();
-  store.remove(CURRENT_KEY);
   renderAll();
   els.input.focus();
 });
@@ -928,7 +925,6 @@ function drawHistory() {
   $('#clear-history').addEventListener('click', () => {
     if (!confirm('Delete all saved rulings on this device?')) return;
     store.remove(STORE_KEY);
-    store.remove(CURRENT_KEY);
     drawHistory();
   });
 }
@@ -938,7 +934,6 @@ function openThread(id) {
   if (!th) return;
   if (state.busy) state.abort?.abort();
   state.thread = { id: th.id, created: th.created, turns: th.turns.map((t) => ({ ...t, trace: t.trace || [], cards: t.cards || [], rules: t.rules || [] })) };
-  store.set(CURRENT_KEY, { id: th.id, at: Date.now() });
   closeSheet();
   renderAll();
   scrollToEnd();
@@ -992,13 +987,6 @@ function debounce(fn, ms) { let t = 0; return (...a) => { clearTimeout(t); t = s
 
 // ------------------------------------------------------------------ start
 
-function restore() {
-  const cur = store.get(CURRENT_KEY, null);
-  if (!cur || Date.now() - cur.at > 6 * 60 * 60 * 1000) return;
-  const th = loadThreads().find((x) => x.id === cur.id);
-  if (th) state.thread = { id: th.id, created: th.created, turns: th.turns.map((t) => ({ ...t, trace: t.trace || [], cards: t.cards || [], rules: t.rules || [] })) };
-}
-
 const narrow = matchMedia('(max-width: 600px)');
 const setPlaceholder = () => {
   els.input.placeholder = narrow.matches ? 'Ask a rules question' : 'Ask a rules question. Type [[ to name a card.';
@@ -1006,9 +994,8 @@ const setPlaceholder = () => {
 };
 narrow.addEventListener?.('change', setPlaceholder);
 
-restore();
+// Always open on a fresh question. Past rulings are a tap away in History.
 renderAll();
-if (state.thread.turns.length) scrollToEnd();
 checkStatus();
 setPlaceholder();
 (window.requestIdleCallback || ((f) => setTimeout(f, 400)))(() => getRules().catch(() => {}));
