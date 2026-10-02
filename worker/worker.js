@@ -421,22 +421,32 @@ async function callGemini(env, msgs, opts, emit) {
     toolConfig: { functionCallingConfig: { mode: opts.allowTools ? 'AUTO' : 'NONE' } },
     generationConfig: { maxOutputTokens: 8192, ...(thinkingConfig ? { thinkingConfig } : {}) },
   };
-  // Nothing has been streamed to the app yet, so an overloaded model can be swapped for the
-  // fallback without the player noticing. Google's docs say thought signatures from another
-  // Gemini model in the history are fine to resend.
+  // Google sometimes reports "high demand" up front and sometimes partway through an answer.
+  // Either way the fallback model takes the whole step again; if the app already showed some
+  // of the failed answer, a "reset" event tells it to throw that part away. Google's docs say
+  // thought signatures from another Gemini model in the history are fine to resend.
   const models = geminiModels(env);
-  let res;
-  for (let i = 0; i < models.length; i++) {
-    res = await fetch(`${base}/v1beta/models/${encodeURIComponent(models[i])}:streamGenerateContent?alt=sse`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-      body: JSON.stringify(body),
-    });
-    if (res.ok) break;
-    const err = await upstreamError(res, 'gemini');
-    if (err.code !== 'busy' || i === models.length - 1) throw err;
-    console.log(`gemini: ${models[i]} is busy, trying ${models[i + 1]}`);
+  for (let i = 0; ; i++) {
+    let shown = false;
+    try {
+      return await streamGemini(env, base, models[i], body, (evt) => { shown = true; emit(evt); });
+    } catch (err) {
+      if (err.code !== 'busy' || i === models.length - 1) throw err;
+      console.log(`gemini: ${models[i]} is busy, trying ${models[i + 1]}`);
+      if (shown) emit({ type: 'reset' });
+    }
   }
+}
+
+const BUSY_STATUSES = new Set(['RESOURCE_EXHAUSTED', 'UNAVAILABLE']);
+
+async function streamGemini(env, base, model, body, emit) {
+  const res = await fetch(`${base}/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw await upstreamError(res, 'gemini');
 
   const parts = [];
   let calls = 0;
@@ -444,7 +454,11 @@ async function callGemini(env, msgs, opts, emit) {
   for await (const evt of readSSE(res.body)) {
     const d = evt.data;
     if (!d || typeof d !== 'object') continue;
-    if (d.error) throw new UpstreamError(d.error.code === 429 ? 'busy' : 'upstream', d.error.message || 'Provider error');
+    if (d.error) {
+      console.log(`gemini stream error ${d.error.code}: ${d.error.message}`);
+      const busy = [429, 503, 529].includes(d.error.code) || BUSY_STATUSES.has(d.error.status);
+      throw new UpstreamError(busy ? 'busy' : 'upstream', d.error.message || 'Provider error');
+    }
     if (d.promptFeedback && d.promptFeedback.blockReason) throw new UpstreamError('blocked', 'The provider declined to answer that question.');
     const cand = d.candidates && d.candidates[0];
     if (!cand) continue;
